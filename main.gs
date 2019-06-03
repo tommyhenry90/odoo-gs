@@ -1,62 +1,45 @@
-/**
- * Authenticates User and return user id.
- *
- * @param {string} dbName the name of the database we are connecting to 
- * @param {string} url the url of the odoo database
- * @param {string} username of user
- * @param {string} password of user
- * @param {int}    optional port number of database - ignore is using online
- *
- * @return {int} user ID of user loggin in to be used in rest of calls
- */
-function authenticateOdoo(dbName, url, username, password, opt_port) {
-  // assume port 80 (http) if not specified by user
-  if (opt_port == null) {
-    opt_port = 80;
-  }
+function onFormSubmit(e) {
+  var values = e.namedValues;
   
-  // Connect to odoo common end point for authentication
-  var common = url + ":" + opt_port + "/xmlrpc/2/common";
-  var request = new XMLRPC.XmlRpcRequest(odoo.URL_COMMON, "authenticate");
-  
-  // add required elements to authentication call
-  request.addParam(dbName); 
-  request.addParam(username);
-  request.addParam(password);
-  request.addParam({});
-  
-  // Get user id for future calls and return
-  var userId = request.send().parseXML();
-  return userId
-}
+  var factoryAddress = "46 Euston Road, Alexandria, NSW, Australia";
+  var siteAddress = values['Street Address'] + ", " + values['Suburb'] + ", " + values['State'] + ", " + values['Country'];
 
-/**
- * create data in odoo specified odoo objet.
- *
- * @param {string} dbName the name of the database we are connecting to 
- * @param {string} userId of user
- * @param {string} password of user
- * @param {string} odooObject - the name of the object in odoo eg res.partner
- * @param {string} data row of information to be created
- * @param {string} url the url of the odoo database
- * @param {int}    optional port number of database - ignore is using online
- *
- * @return {string} result of create request from odoo
- */
-function create(dbName, userId, password, odooObject, data, url, opt_port) {
+  var nearestCity = NEARESTURBANCENTRE(siteAddress,"name");
+  var siteToCity = GOOGLEMAPS(siteAddress, nearestCity, "kilometers");
+  var factoryToSite = GOOGLEMAPS(factoryAddress, siteAddress, "kilometers");
   
-  var URL_OBJECT = url + ":" + opt_port + "/xmlrpc/2/object";
+  var dealNumber = newDeal(values['Project Name'], values['Company Name'], values['Your name'], values['E-mail']);
+  var pipedriveLink = "https://5b.pipedrive.com/deal/" + dealNumber;
+  var projectID = createProjectID(dealNumber);
+  var dropboxPath = createDropboxFolder(stringClean(values['Company Name'].toString()), projectID, stringClean(values['Project Name'].toString()));
+  var dropboxLink = getDropboxLink(dropboxPath);
   
-  var request = new XMLRPC.XmlRpcRequest(odoo.URL_OBJECT, "execute_kw");
+  var fileName = projectID + ' - ' + stringClean(values['Project Name'].toString()) + ' - Pricing';
   
-  request.addParam(dbName);
-  request.addParam(userId);
-  request.addParam(password);
+  var ss = SpreadsheetApp.openById("1V3B6Tjab0h9IaCtut0zFLKAhplHgxIGAc7mFG5lC25A");
   
-  request.addParam(odooObject);
-  request.addParam("create");
-  request.addParam(data);
+  var newSS = fillInSpreadsheet(ss.copy(fileName), values, projectID, nearestCity, siteToCity, factoryToSite, pipedriveLink, dropboxLink);
+  var emailAddresses = ["rob.ludwick@5b.com.au", "francesca.osborne@5b.com.au"]
+  newSS.addEditors(emailAddresses)
+  var spreadsheetLink = newSS.getUrl();
   
-  var response = request.send().parseXML();
-  return response
+  var blob = getExcelDoc(newSS);
+  var excelFileLink = uploadToDropbox(blob, dropboxPath);
+  var helioscopeProjectId = newHelioscopeProject(projectID + ' - ' + values['Company Name'] + ' - ' + values['Project Name'], values['Company Name'], 
+                                            dropboxLink, values['DC Power Target (kW)'], siteAddress);
+  var helioscopeDesignId = newHelioscopeDesign(helioscopeProjectId);
+  var numMavs = getNumMAVs(values['DC Power Target (kW)'], 340, 9, 5);
+  var newSegment = newFieldSegment(helioscopeDesignId, numMavs, 34.28, 6);
+  var helioscopeLink = "https://www.helioscope.com/projects/" + helioscopeProjectId;
+  
+  
+  var alertSubject = projectID + "- New MAV Quote For " + values['Your name'] + " from " + values['Company Name'];
+  var ndaVars = getNDAVars(values['Company Name'], values['Company ACN'], values['Company Address'], values['Your name'], values['E-mail'], getLongDate());
+  var nda = createNDA("1q4aBiQrTsVrAhMMex3VCJ0-FpD0nMbp8bHNtI5o6TvA", ndaVars)
+  var blob = getWordDoc(nda);
+  uploadToDropbox(blob, dropboxPath, true)
+  
+  sendEmail("rob.ludwick@5b.com.au", alertSubject, newSS, blob, dropboxLink, pipedriveLink, helioscopeLink, spreadsheetLink);
+  sendSlackAlert(alertSubject, newSS, dropboxLink, pipedriveLink, helioscopeLink, spreadsheetLink);
+  createTrelloCard(projectID, values['Company Name'], values['Project Name'], values['Your name'], pipedriveLink, dropboxLink, spreadsheetLink);
 }
